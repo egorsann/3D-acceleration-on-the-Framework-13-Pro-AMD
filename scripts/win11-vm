@@ -1,34 +1,79 @@
 #!/usr/bin/env bash
 # One-click launcher for the 3D Windows VM.
 #   win11-vm              start the VM if needed, wait for Windows, open the SPICE console
-#   win11-vm --shutdown   clean shutdown (ACPI) and wait until it is off
+#   win11-vm --shutdown   clean shutdown (ACPI); held back until the 3D driver's boot counter is clear
 # Environment: WIN11_VM=win11 (domain name)
 #
 # Why the SPICE console: 3D only works there, not in Remote Desktop sessions (docs/06-findings.md).
 # Why shut down instead of "Restart" in Windows: a guest reboot inside a running VM can abort QEMU 10.2.2 (docs/06-findings.md).
 # The window is opened through XWayland (GDK_BACKEND=x11, 1x): measurably a little snappier than the native Wayland viewer.
 set -u
+ARGS=("$@")
 VM=${WIN11_VM:-win11}; C=qemu:///system
 HERE=$(dirname "$(readlink -f "$0")")
 state()  { virsh -c $C domstate "$VM" 2>/dev/null; }
-notify() { command -v notify-send >/dev/null && notify-send -a "Windows VM" -i computer -t "${2:-4000}" "Windows VM" "$1" || echo "$1"; }
+# Same popup slot as win11-vm-notify (the life-cycle watcher), so messages replace each other. A popup is replaced only while it is
+# still on screen (<10 s old): replacing an expired one makes Plasma update a history entry silently (no popup at all).
+NID=${XDG_RUNTIME_DIR:-/tmp}/win11-vm-notify.id
+notify() {
+  if ! command -v notify-send >/dev/null; then echo "$1"; return; fi
+  local prev=0 pid pt id now; now=$(date +%s)
+  [[ -s $NID ]] && read -r pid pt <"$NID" && (( now - ${pt:-0} < 10 )) && prev=$pid
+  id=$(notify-send -p -r "$prev" -a "Windows VM" -i win11-vm -t "${2:-4000}" "Windows VM" "$1") && echo "$id $now" >"$NID"
+}
+# the watcher service announces start / up / off / crash itself; without it the launcher says it
+watcher() { systemctl --user is-active -q win11-vm-notify.service 2>/dev/null; }
 err()    { if command -v kdialog >/dev/null; then kdialog --title "Windows VM" --error "$1"; else echo "$1" >&2; fi; exit 1; }
+
+# --- 3D driver boot counter (VgpuBootGuard): the driver counts every start and clears the counter after about a minute of
+# healthy running; at 2 it refuses to load (Code 37, basic display). So a session must run long enough before it is shut down.
+# Waiting while the VM is OFF changes nothing: the counter lives in the guest and only clears while it runs.
+GUARD=$HERE/win11-vm-guard
+SETTLE=90   # seconds after QEMU start until the counter is normally clear (boot ~25 s + about a minute)
+qemu_age() { local p; p=$(pgrep -f "^/usr/bin/qemu-system-x86_64 -name guest=$VM," | head -1); [[ -n $p ]] && ps -o etimes= -p "$p" | tr -d ' '; }
+
+# hold a shutdown back until the counter is clear, with a live countdown popup
+settle_wait() {
+  local up g left
+  while up=$(qemu_age) && [[ -n $up ]] && (( up < SETTLE + 90 )); do
+    if (( up >= 45 )); then
+      g=$("$GUARD" get 2>/dev/null) || g=1
+      (( g == 0 || g >= 2 )) && return 0        # clear, or already tripped (shutting down is then the repair)
+    fi
+    left=$(( SETTLE - up )); (( left < 3 )) && left=3
+    notify "Windows is still settling its 3D driver.
+Shutting down in about ${left} s. Earlier would lock the driver at the next start (no 3D)." 4000
+    sleep 3
+  done
+}
 
 if [[ ${1:-} == --shutdown ]]; then
   [[ $(state) == running ]] || { notify "Windows VM is already off."; exit 0; }
+  settle_wait
   virsh -c $C shutdown "$VM" >/dev/null 2>&1 || err "Could not send the shutdown request."
   notify "Shutting down Windows..."
-  for _ in $(seq 90); do [[ $(state) == "shut off" ]] && { notify "Windows VM is off."; exit 0; }; sleep 2; done
+  for _ in $(seq 90); do [[ $(state) == "shut off" ]] && { watcher || notify "Windows VM is off."; exit 0; }; sleep 2; done
   err "Windows did not shut down within 3 minutes. Open it and check for unsaved work."
 fi
 
+NOVIEW=0   # --no-viewer (tests): do everything except opening the window
+[[ ${1:-} == --no-viewer ]] && NOVIEW=1
+
 pgrep -f "virt-viewer.*--attach $VM" >/dev/null && { notify "Windows VM is already open."; exit 0; }
 
+# a shutdown that is still in progress: wait for it instead of failing to start
+if [[ $(state) == "in shutdown" ]]; then
+  notify "Windows is still shutting down. It starts as soon as it is off." 8000
+  for _ in $(seq 60); do [[ $(state) == "shut off" ]] && break; sleep 2; done
+fi
+
+STARTED=0
 if [[ $(state) != running ]]; then
+  STARTED=1
   # rebuild the 1 ms fence-poll QEMU module copy the VM XML points at (/tmp is cleared at reboot); harmless if it fails
   "$HERE/qemu-fence-patch.sh" >/dev/null 2>&1 || true
   virsh -c $C start "$VM" >/dev/null 2>&1 || err "Could not start VM '$VM'."
-  notify "Starting Windows... the window opens when it is ready." 8000
+  watcher || notify "Starting Windows... the window opens when it is ready." 8000
 fi
 
 # wait until the guest agent answers (boot can take a while); open the window anyway after 3 minutes
@@ -37,12 +82,28 @@ for _ in $(seq 90); do
   sleep 2
 done
 
+# The 3D driver locked itself (counter at 2: the last session was too short or QEMU crashed)? Reset the counter and restart
+# Windows once (clean shutdown + fresh start) before the window opens. One try only.
+if (( STARTED )) && [[ ${WIN11_RECOVERED:-0} != 1 ]]; then
+  sleep 15   # let the driver finish loading before the counter is read
+  g=$("$GUARD" get 2>/dev/null) || g=0
+  if (( g >= 2 )); then
+    notify "The 3D driver was locked by a too-short earlier session. Fixing it: Windows restarts once (about 1 minute)." 10000
+    "$GUARD" reset
+    virsh -c $C shutdown "$VM" --mode agent >/dev/null 2>&1 || virsh -c $C shutdown "$VM" >/dev/null 2>&1
+    for _ in $(seq 60); do [[ $(state) == "shut off" ]] && break; sleep 2; done
+    sleep 5
+    WIN11_RECOVERED=1 exec "$0" "${ARGS[@]}"
+  fi
+fi
+(( NOVIEW )) && exit 0
+
 # --attach: connect to the running VM (without it virt-viewer may restart it)
 GDK_BACKEND=x11 GDK_SCALE=1 virt-viewer -c $C --attach "$VM" >/dev/null 2>&1
 
-# window closed: offer a clean shutdown (leaving it running is fine too)
+# window closed: offer a clean shutdown (leaving it running is fine too); the shutdown itself waits for the boot counter
 sleep 2
 [[ $(state) == running ]] || exit 0
-if command -v kdialog >/dev/null && kdialog --title "Windows VM" --yesno "The Windows window was closed.\nShut the VM down too?\n\n(Wait about a minute after boot before shutting down, see README.)"; then
+if command -v kdialog >/dev/null && kdialog --title "Windows VM" --yesno "The Windows window was closed.\nShut the VM down too?"; then
   exec "$0" --shutdown
 fi

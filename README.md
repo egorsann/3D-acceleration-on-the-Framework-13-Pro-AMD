@@ -98,7 +98,10 @@ scripts/host-setup.sh     host changes (idempotent, --check mode)
 scripts/create-vm.sh      builds the VM (virt-install + apply-3d.py)
 scripts/apply-3d.py       turns any Windows VM XML into the 3D configuration (idempotent)
 scripts/qemu-fence-patch.sh  builds the 1 ms fence-poll copy of QEMU's modules
-scripts/win11-vm          launcher: start, wait, open the console, clean shutdown
+scripts/win11-vm          launcher: start, wait, open the console, clean shutdown (waits for the 3D driver's boot counter, repairs a locked driver)
+scripts/win11-vm-guard    read/clear the driver's boot counter through the guest agent
+scripts/win11-vm-notify   popups for start / up / off / crash (user service, win11-vm-notify.service)
+scripts/install-launcher.sh  installs the launcher, icon, menu entry and the popup service for your user
 scripts/guest-ps.py       run PowerShell in the guest through the QEMU guest agent
 scripts/guest/            PowerShell for inside Windows (prepare, certificate fallback, env, boot guard, health check)
 selinux/                  the SELinux module source

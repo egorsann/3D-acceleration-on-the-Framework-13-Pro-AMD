@@ -1,0 +1,33 @@
+#!/usr/bin/python3 -I
+"""win11-vm-guard get|reset : read / clear the 3D driver's boot-loop counter (VgpuBootGuard) through the guest agent.
+get prints the number (a missing value counts as 0); exit 2 = guest agent not answering. The driver counts every start and
+clears the counter after about a minute of healthy running; at 2 it refuses to load (Code 37, basic display).
+Domain name: environment WIN11_VM (default win11)."""
+import base64, json, os, re, subprocess, sys, time
+C, VM = "qemu:///system", os.environ.get("WIN11_VM", "win11")
+KEY = r"HKLM\SYSTEM\CurrentControlSet\Services\VioGpu3D"
+
+def agent(cmd):
+    r = subprocess.run(["virsh", "-c", C, "qemu-agent-command", VM, json.dumps(cmd)], capture_output=True, text=True, timeout=30)
+    if r.returncode:
+        sys.exit(2)
+    return json.loads(r.stdout)["return"]
+
+def reg(*args):
+    pid = agent({"execute": "guest-exec", "arguments": {"path": r"C:\Windows\System32\reg.exe", "arg": list(args), "capture-output": True}})["pid"]
+    for _ in range(30):
+        st = agent({"execute": "guest-exec-status", "arguments": {"pid": pid}})
+        if st.get("exited"):
+            return st.get("exitcode"), base64.b64decode(st.get("out-data", "")).decode("utf-8", "replace")
+        time.sleep(0.5)
+    sys.exit(2)
+
+if len(sys.argv) != 2 or sys.argv[1] not in ("get", "reset"):
+    sys.exit("usage: win11-vm-guard get|reset")
+if sys.argv[1] == "get":
+    rc, out = reg("query", KEY, "/v", "VgpuBootGuard")
+    m = re.search(r"VgpuBootGuard\s+REG_DWORD\s+0x([0-9a-fA-F]+)", out)
+    print(int(m.group(1), 16) if m else 0)
+else:
+    rc, _ = reg("add", KEY, "/v", "VgpuBootGuard", "/t", "REG_DWORD", "/d", "0", "/f")
+    sys.exit(0 if rc == 0 else 1)

@@ -4,7 +4,8 @@
 scripts/win11-vm              # start if needed, wait for Windows, open the SPICE console
 scripts/win11-vm --shutdown   # clean shutdown
 ```
-Put it on your PATH or into a `.desktop` entry; the launcher needs `virsh`, `virt-viewer`, optionally `kdialog`/`notify-send`. Set `WIN11_VM=name` if your domain is not called `win11`.
+`scripts/install-launcher.sh` installs it for your user: the commands in `~/.local/bin`, a menu/launcher entry "Windows VM" (with its own icon and a "Shut down" action) and the popup service below. Safe to re-run.
+The launcher needs `virsh`, `virt-viewer`, `notify-send` (and optionally `kdialog`). Set `WIN11_VM=name` if your domain is not called `win11`.
 Log in at the Windows login screen of the console window (the password is typed by you; nothing here stores it).
 
 ## The three rules
@@ -15,6 +16,24 @@ Log in at the Windows login screen of the console window (the password is typed 
    It happened 3 times in testing and not on every reboot. A full shutdown followed by a fresh `virsh start` is always safe because it is a new QEMU process.
 3. **Give it a minute.** The driver increments `VgpuBootGuard` (`HKLM\SYSTEM\CurrentControlSet\Services\VioGpu3D`) at every start and clears it after about a minute of healthy running.
    At 2 it refuses to start (Device Manager Code 37, Windows falls back to a basic display, which still works but is slow). Quick shutdown/start cycles or a QEMU crash cause it.
+   **The launcher handles this for you** (see below). Note that waiting while the VM is *off* cannot help: the counter lives in the guest and is only cleared while Windows runs.
+
+## What the launcher does about the boot counter
+
+* **Shutdown is held back** (also the "shut down too?" question after you close the window) until the counter reads 0: a popup counts down
+  ("Windows is still settling its 3D driver. Shutting down in about N s"). In testing the counter cleared about 45 s after QEMU started.
+* **A start that finds the counter at 2** (after a crash, a forced power-off, a restart from inside Windows) resets it through the guest agent and restarts Windows once (clean shutdown, fresh start)
+  before the window opens; the popup says so. One try only.
+* `scripts/win11-vm-guard get|reset` reads or clears the counter by hand (guest agent, no login needed).
+
+## Popups
+
+`win11-vm-notify` (user service `win11-vm-notify.service`, installed by `install-launcher.sh`) turns libvirt events into one reused popup, whoever starts or stops the VM:
+*Starting Windows…* → *Windows is up.* → *Windows VM is off.* A QEMU crash gives a persistent red popup, a restart from inside Windows a warning. `journalctl --user -u win11-vm-notify` shows what it saw.
+
+## KDE: keep the console maximized (optional)
+
+virt-viewer resizes its window to the guest size after connecting. With a KWin rule (System Settings → Window Rules → add: window class *virt-viewer* (substring), Maximized horizontally/vertically: *Force* → Yes) it stays maximized and the guest follows the window size.
 
 ## Recovery: "Code 37" / no 3D after a crash or quick restarts
 

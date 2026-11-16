@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Desktop notifications for the VM's life cycle, whoever starts or stops it (the launcher, virt-manager, Windows itself, a QEMU
+# crash). Runs as the user service win11-vm-notify.service (install-launcher.sh). Environment: WIN11_VM=win11.
+# One popup is reused while it is on screen, so "Starting" turns into "up" instead of piling up.
+C=qemu:///system VM=${WIN11_VM:-win11}
+ID=${XDG_RUNTIME_DIR:-/tmp}/win11-vm-notify.id
+note() {  # note <urgency> <timeout ms> <text>
+  # Replace the previous popup only while it is still on screen (<10 s old). Replacing the id of an expired popup makes Plasma
+  # update a history entry silently: no popup at all.
+  local prev=0 pid pt id now; now=$(date +%s)
+  [[ -s $ID ]] && read -r pid pt <"$ID" && (( now - ${pt:-0} < 10 )) && prev=$pid
+  id=$(notify-send -p -r "$prev" -a "Windows VM" -i win11-vm -u "$1" -t "$2" "Windows VM" "$3" 2>&1) && echo "$id $now" >"$ID"
+  echo "popup (replaces $prev) -> ${id:-failed}: ${3%%$'\n'*}" >&2   # journal: journalctl --user -u win11-vm-notify
+}
+while :; do
+  # no domain name on the virsh command line: that filter went stale after the first stop/start (no more events)
+  stdbuf -oL virsh -c $C event --all --loop 2>/dev/null | while read -r line; do
+    [[ $line == *"for domain '$VM'"* ]] || continue
+    echo "event: $line" >&2
+    case $line in
+      *"'lifecycle'"*"Started"*)     note low 6000 "Starting Windows… the console opens when it is ready." ;;
+      *"'lifecycle'"*"Stopped Shutdown"*)  note low 5000 "Windows VM is off." ;;
+      *"'lifecycle'"*"Stopped Crashed"*)   note critical 0 "The Windows VM crashed (QEMU died).
+Start it again from the launcher. If the 3D driver stays off (Code 37), the launcher repairs it on the next start (docs/05-usage.md)." ;;
+      *"'lifecycle'"*"Stopped Destroyed"*) note normal 6000 "Windows VM was powered off (forced)." ;;
+      *"'lifecycle'"*"Stopped"*)           note normal 6000 "Windows VM stopped (${line##*: })." ;;
+      *"'agent-lifecycle'"*"state: 'connected'"*) note low 4000 "Windows is up." ;;
+      *"'reboot'"*)                  note critical 0 "Windows is restarting. A restart can crash the 3D VM: next time use Shut down, then start." ;;
+    esac
+  done
+  sleep 5   # libvirt restarted or not reachable yet: reconnect
+done

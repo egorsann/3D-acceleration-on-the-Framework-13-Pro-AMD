@@ -55,4 +55,6 @@ No injected DLLs/IFEO hooks/third-party shell mods were found; the guest is an u
 4. **btrfs csum errors** on a `cache=none` qcow2.
 5. **virt-viewer needs `--attach`** with `listen type='none'/'socket'`, otherwise it may try to start the VM.
 6. **`virt-viewer --title`** does not exist in virt-viewer 11.
-7. A one-minute healthy run is needed between start cycles (boot guard).
+7. A one-minute healthy run is needed between start cycles (boot guard). The launcher now enforces it by holding shutdowns back ([docs/05](05-usage.md)).
+8. **Notification popups that never appear:** replacing the id of a popup that has already expired makes Plasma update a history entry silently (the call succeeds and returns the id). Replace only popups that are still on screen.
+9. **`virsh event <domain>` goes deaf** after the domain's first stop/start (the name filter goes stale, the process stays alive). Listen to all events and filter the text.

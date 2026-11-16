@@ -15,6 +15,13 @@ video `accel3d`, the `qemu:commandline` block (including `-spice` and `qemu:env`
 ## Only the QEMU module patch
 Remove `<qemu:env name='QEMU_MODULE_DIR' …/>` from the XML (or `rm -rf /tmp/qemu-modules-1ms`: QEMU then silently uses the stock modules; the launcher would rebuild the copy at the next start, so remove the env instead).
 
+## Launcher, icon and popup service
+```bash
+systemctl --user disable --now win11-vm-notify
+rm ~/.local/bin/{win11-vm,win11-vm-guard,win11-vm-notify,qemu-fence-patch.sh} ~/.config/systemd/user/win11-vm-notify.service \
+   ~/.local/share/applications/win11-vm.desktop ~/.local/share/icons/hicolor/scalable/apps/win11-vm.svg
+```
+
 ## Host
 ```bash
 sudo semodule -r vgpu3d-venus                                     # SELinux rule

@@ -1,0 +1,11 @@
+[Unit]
+Description=Desktop notifications for the 3D Windows VM (start, ready, off, crash)
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/win11-vm-notify
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
