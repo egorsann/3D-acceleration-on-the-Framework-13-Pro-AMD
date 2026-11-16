@@ -54,6 +54,14 @@ Nothing under `/usr` is modified; every change has an undo ([docs/07-rollback.md
 
 ## Quick start
 
+**All automatable steps in one command** (Fedora 44, as your normal user; it asks for sudo where needed):
+
+```bash
+bash install.sh --check                                     # only report what is missing
+bash install.sh --windows-iso ~/win11-ltsc.iso --virtio-iso ~/virtio-win.iso   # host + launcher + create the VM
+```
+Installing Windows itself, the guest drivers and the vgpu3d driver stay manual (steps 2-3 below); the script prints what is left. The steps one by one:
+
 1. **Host**: `sudo bash scripts/host-setup.sh` ([docs/01-host.md](docs/01-host.md)).
 2. **VM**: get a Windows 11 IoT Enterprise LTSC (2024, build 26100) ISO and `virtio-win.iso`, then
    `sudo bash scripts/create-vm.sh --windows-iso … --virtio-iso …`, start it and install Windows ([docs/02-vm.md](docs/02-vm.md)).
@@ -95,6 +103,7 @@ Nothing under `/usr` is modified; every change has an undo ([docs/07-rollback.md
 
 ```
 docs/                     step-by-step guide, measurements, rollback, bug-report drafts
+install.sh                everything automatable in one command (host-setup + install-launcher + optional create-vm, --check mode)
 scripts/host-setup.sh     host changes (idempotent, --check mode)
 scripts/create-vm.sh      builds the VM (virt-install + apply-3d.py)
 scripts/apply-3d.py       turns any Windows VM XML into the 3D configuration (idempotent)
