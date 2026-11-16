@@ -1,0 +1,8 @@
+*.pyc
+__pycache__/
+*.qcow2
+*.iso
+*.exe
+*.zip
+*.log
+samples.csv

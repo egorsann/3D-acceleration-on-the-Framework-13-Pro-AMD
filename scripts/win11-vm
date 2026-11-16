@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# One-click launcher for the 3D Windows VM.
+#   win11-vm              start the VM if needed, wait for Windows, open the SPICE console
+#   win11-vm --shutdown   clean shutdown (ACPI) and wait until it is off
+# Environment: WIN11_VM=win11 (domain name)
+#
+# Why the SPICE console: 3D only works there, not in Remote Desktop sessions (docs/06-findings.md).
+# Why shut down instead of "Restart" in Windows: a guest reboot inside a running VM can abort QEMU 10.2.2 (docs/06-findings.md).
+# The window is opened through XWayland (GDK_BACKEND=x11, 1x): measurably a little snappier than the native Wayland viewer.
+set -u
+VM=${WIN11_VM:-win11}; C=qemu:///system
+HERE=$(dirname "$(readlink -f "$0")")
+state()  { virsh -c $C domstate "$VM" 2>/dev/null; }
+notify() { command -v notify-send >/dev/null && notify-send -a "Windows VM" -i computer -t "${2:-4000}" "Windows VM" "$1" || echo "$1"; }
+err()    { if command -v kdialog >/dev/null; then kdialog --title "Windows VM" --error "$1"; else echo "$1" >&2; fi; exit 1; }
+
+if [[ ${1:-} == --shutdown ]]; then
+  [[ $(state) == running ]] || { notify "Windows VM is already off."; exit 0; }
+  virsh -c $C shutdown "$VM" >/dev/null 2>&1 || err "Could not send the shutdown request."
+  notify "Shutting down Windows..."
+  for _ in $(seq 90); do [[ $(state) == "shut off" ]] && { notify "Windows VM is off."; exit 0; }; sleep 2; done
+  err "Windows did not shut down within 3 minutes. Open it and check for unsaved work."
+fi
+
+pgrep -f "virt-viewer.*--attach $VM" >/dev/null && { notify "Windows VM is already open."; exit 0; }
+
+if [[ $(state) != running ]]; then
+  # rebuild the 1 ms fence-poll QEMU module copy the VM XML points at (/tmp is cleared at reboot); harmless if it fails
+  "$HERE/qemu-fence-patch.sh" >/dev/null 2>&1 || true
+  virsh -c $C start "$VM" >/dev/null 2>&1 || err "Could not start VM '$VM'."
+  notify "Starting Windows... the window opens when it is ready." 8000
+fi
+
+# wait until the guest agent answers (boot can take a while); open the window anyway after 3 minutes
+for _ in $(seq 90); do
+  virsh -c $C qemu-agent-command "$VM" '{"execute":"guest-ping"}' >/dev/null 2>&1 && break
+  sleep 2
+done
+
+# --attach: connect to the running VM (without it virt-viewer may restart it)
+GDK_BACKEND=x11 GDK_SCALE=1 virt-viewer -c $C --attach "$VM" >/dev/null 2>&1
+
+# window closed: offer a clean shutdown (leaving it running is fine too)
+sleep 2
+[[ $(state) == running ]] || exit 0
+if command -v kdialog >/dev/null && kdialog --title "Windows VM" --yesno "The Windows window was closed.\nShut the VM down too?\n\n(Wait about a minute after boot before shutting down, see README.)"; then
+  exec "$0" --shutdown
+fi
