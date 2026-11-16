@@ -58,7 +58,8 @@ Nothing under `/usr` is modified; every change has an undo ([docs/07-rollback.md
 2. **VM**: get a Windows 11 IoT Enterprise LTSC (2024, build 26100) ISO and `virtio-win.iso`, then
    `sudo bash scripts/create-vm.sh --windows-iso … --virtio-iso …`, start it and install Windows ([docs/02-vm.md](docs/02-vm.md)).
 3. **Guest**: install the guest agent and virtio drivers, then the vgpu3d driver ([docs/03-guest.md](docs/03-guest.md)).
-4. **Daily use**: `scripts/win11-vm` ([docs/05-usage.md](docs/05-usage.md)). Read the three rules there first.
+4. **Launcher**: `bash scripts/install-launcher.sh` (commands, menu entry with icon, popup service), then open **Windows VM** from your launcher or run `win11-vm`
+   ([docs/05-usage.md](docs/05-usage.md)). Read the three rules there first.
 
 ## Rules you must know (they cost the author several crashes)
 
